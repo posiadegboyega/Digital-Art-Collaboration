@@ -94,3 +94,75 @@
   )
 )
 
+(define-public (mint-nft (artwork-id uint) (price uint))
+  (let (
+    (artwork (unwrap! (map-get? artworks { artwork-id: artwork-id }) err-not-found))
+    (new-nft-id (+ (var-get last-nft-id) u1))
+  )
+    (asserts! (get is-finalized artwork) err-unauthorized)
+    (asserts! (is-none (get nft-id artwork)) err-already-exists)
+    (map-set nfts { nft-id: new-nft-id } {
+      artwork-id: artwork-id,
+      owner: tx-sender,
+      price: price
+    })
+    (map-set artworks { artwork-id: artwork-id }
+      (merge artwork { nft-id: (some new-nft-id) })
+    )
+    (var-set last-nft-id new-nft-id)
+    (ok new-nft-id)
+  )
+)
+
+(define-public (buy-nft (nft-id uint))
+  (let (
+    (nft (unwrap! (map-get? nfts { nft-id: nft-id }) err-not-found))
+    (artwork (unwrap! (map-get? artworks { artwork-id: (get artwork-id nft) }) err-not-found))
+  )
+    (try! (stx-transfer? (get price nft) tx-sender (get owner nft)))
+    (try! (distribute-royalties nft-id))
+    (ok (map-set nfts { nft-id: nft-id }
+      (merge nft { owner: tx-sender })
+    ))
+  )
+)
+
+(define-private (distribute-royalties (nft-id uint))
+  (let (
+    (nft (unwrap! (map-get? nfts { nft-id: nft-id }) err-not-found))
+    (artwork (unwrap! (map-get? artworks { artwork-id: (get artwork-id nft) }) err-not-found))
+    (total-contributions (get total-contributions artwork))
+    (price (get price nft))
+  )
+    (ok (fold distribute-to-artist
+          (get collaborators artwork)
+          { index: u0, price: price, total: total-contributions, artwork-id: (get artwork-id nft) }))
+  )
+)
+
+(define-private (distribute-to-artist (artist principal) (context { index: uint, price: uint, total: uint, artwork-id: uint }))
+  (let (
+    (artwork (unwrap! (map-get? artworks { artwork-id: (get artwork-id context) }) context))
+    (contribution (default-to u0 (element-at (get contributions artwork) (get index context))))
+    (royalty (/ (* (get price context) contribution) (get total context)))
+  )
+    (match (as-contract (stx-transfer? royalty tx-sender artist))
+      success (merge context { index: (+ (get index context) u1) })
+      error context
+    )
+  )
+)
+
+;; Read-only Functions
+(define-read-only (get-artist-info (artist-id principal))
+  (map-get? artists { artist-id: artist-id })
+)
+
+(define-read-only (get-artwork-info (artwork-id uint))
+  (map-get? artworks { artwork-id: artwork-id })
+)
+
+(define-read-only (get-nft-info (nft-id uint))
+  (map-get? nfts { nft-id: nft-id })
+)
+
