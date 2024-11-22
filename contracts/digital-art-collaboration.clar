@@ -45,3 +45,52 @@
   )
 )
 
+(define-public (create-artwork (title (string-utf8 100)) (description (string-utf8 500)))
+  (let (
+    (artist (unwrap! (map-get? artists { artist-id: tx-sender }) err-unauthorized))
+    (new-artwork-id (+ (var-get last-artwork-id) u1))
+  )
+    (map-set artworks { artwork-id: new-artwork-id } {
+      title: title,
+      description: description,
+      creator: tx-sender,
+      collaborators: (list tx-sender),
+      contributions: (list u100),
+      total-contributions: u100,
+      is-finalized: false,
+      nft-id: none
+    })
+    (var-set last-artwork-id new-artwork-id)
+    (ok new-artwork-id)
+  )
+)
+
+(define-public (add-contribution (artwork-id uint) (contribution uint))
+  (let
+    (
+      (artwork (unwrap! (map-get? artworks { artwork-id: artwork-id }) err-not-found))
+      (artist (unwrap! (map-get? artists { artist-id: tx-sender }) err-unauthorized))
+    )
+    (asserts! (not (get is-finalized artwork)) err-unauthorized)
+    (ok (map-set artworks { artwork-id: artwork-id }
+      (merge artwork {
+        collaborators: (unwrap! (as-max-len? (append (get collaborators artwork) tx-sender) u10) err-unauthorized),
+        contributions: (unwrap! (as-max-len? (append (get contributions artwork) contribution) u10) err-unauthorized),
+        total-contributions: (+ (get total-contributions artwork) contribution)
+      })
+    ))
+  )
+)
+
+(define-public (finalize-artwork (artwork-id uint))
+  (let (
+    (artwork (unwrap! (map-get? artworks { artwork-id: artwork-id }) err-not-found))
+  )
+    (asserts! (is-eq (get creator artwork) tx-sender) err-unauthorized)
+    (asserts! (not (get is-finalized artwork)) err-unauthorized)
+    (ok (map-set artworks { artwork-id: artwork-id }
+      (merge artwork { is-finalized: true })
+    ))
+  )
+)
+
